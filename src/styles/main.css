@@ -1,0 +1,3449 @@
+/**
+ * main.css — HUD and overlay styling.
+ *
+ * The canvas draws the world; everything here is chrome layered on top of it.
+ * Palette is kept in sync with PALETTE in renderer.js by hand — few enough
+ * values that a build-time bridge would cost more than it saves.
+ */
+
+:root {
+  --bg: #0a0d14;
+  --ink: #e8fbff;
+  --ink-dim: #7f93ab;
+  --cyan: #4fd8ff;
+  --cyan-soft: #7ce7ff;
+  --red: #ff4d6d;
+  --amber: #ffb703;
+  --violet: #b45cff;
+  --green: #7dffa8;
+
+  --panel: rgba(10, 14, 22, 0.92);
+  --panel-line: rgba(79, 216, 255, 0.22);
+
+  --font: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --mono: ui-monospace, 'SF Mono', 'Cascadia Mono', Menlo, monospace;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: var(--bg);
+  color: var(--ink);
+  font-family: var(--font);
+  /* Dragging on the canvas shouldn't select HUD text. */
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+#app {
+  position: relative;
+  width: 100vw;
+  height: 100vh;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+  /* Nearest-neighbour keeps the pre-rendered glow sprites crisp when scaled. */
+  image-rendering: auto;
+}
+
+/* --------------------------------------------------------------------------
+   HUD
+   -------------------------------------------------------------------------- */
+
+#hud {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;   /* the canvas underneath still gets events */
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 16px clamp(16px, 3vw, 40px);
+}
+
+.hud-top {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  /* Wraps to its own line instead of compressing/overlapping if the two
+   * clusters (timer+wave, kills+fps) genuinely don't both fit — a long run
+   * (5-digit kills), a language whose "WAVE" label runs longer than
+   * English's, or a narrow window could otherwise force them into the same
+   * horizontal space with nowhere to go. */
+  flex-wrap: wrap;
+  gap: 8px 16px;
+}
+
+.hud-cluster {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  flex-wrap: nowrap;   /* the cluster wraps as a whole (see .hud-top); its own contents never do */
+}
+
+.hud-right { align-items: center; }
+
+.hud-time {
+  font-family: var(--mono);
+  font-size: clamp(28px, 4vw, 44px);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  text-shadow: 0 0 24px rgba(79, 216, 255, 0.35);
+}
+
+.hud-wave {
+  font-family: var(--mono);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  color: var(--cyan-soft);
+  padding: 4px 10px;
+  border: 1px solid var(--panel-line);
+  border-radius: 999px;
+  background: rgba(10, 14, 22, 0.5);
+}
+
+.hud-chip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  white-space: nowrap;
+  font-family: var(--mono);
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--ink-dim);
+}
+
+.hud-chip em {
+  font-style: normal;
+  font-size: 10px;
+  letter-spacing: 0.2em;
+  opacity: 0.65;
+}
+
+.hud-chip span { color: var(--ink); font-weight: 600; }
+
+/* Wave announcement */
+.hud-banner {
+  position: absolute;
+  top: 18%;
+  left: 50%;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: clamp(32px, 6vw, 64px);
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  color: var(--ink);
+  opacity: 0;
+  text-shadow: 0 0 40px rgba(79, 216, 255, 0.6);
+}
+
+.hud-banner.show { animation: banner 1.8s ease-out forwards; }
+
+@keyframes banner {
+  0%   { opacity: 0; transform: translateX(-50%) scale(0.86); letter-spacing: 0.4em; }
+  18%  { opacity: 1; transform: translateX(-50%) scale(1); letter-spacing: 0.14em; }
+  70%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* Boss arrival/defeat — same banner, longer on screen (more text, and the
+   moment earns the extra beat), red instead of cyan so it never reads as a
+   routine wave announcement. */
+.hud-banner.boss {
+  color: #ff4d6d;
+  font-size: clamp(24px, 4.4vw, 46px);
+  text-shadow: 0 0 44px rgba(255, 77, 109, 0.7);
+}
+
+.hud-banner.boss.show { animation: bannerBoss 2.6s ease-out forwards; }
+
+@keyframes bannerBoss {
+  0%   { opacity: 0; transform: translateX(-50%) scale(0.86); letter-spacing: 0.36em; }
+  14%  { opacity: 1; transform: translateX(-50%) scale(1); letter-spacing: 0.1em; }
+  80%  { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+.hud-bottom {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-width: 620px;
+}
+
+/* Stat readout above the bars */
+.hud-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+  margin-bottom: 2px;
+}
+
+.hud-stats .stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+}
+
+.hud-stats em {
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  color: var(--ink-dim);
+}
+
+/* Bars */
+.bar {
+  position: relative;
+  height: 20px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.bar-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 100%;
+  border-radius: 3px;
+  transition: width 90ms linear;
+}
+
+.bar-xp { height: 14px; }
+
+.bar-xp .bar-fill {
+  background: linear-gradient(90deg, #2ba7d6, var(--cyan-soft));
+  box-shadow: 0 0 18px rgba(124, 231, 255, 0.55);
+}
+
+.bar-hp .bar-fill {
+  background: linear-gradient(90deg, #3ad17f, var(--green));
+  box-shadow: 0 0 18px rgba(125, 255, 168, 0.35);
+}
+
+/* Health turns red as it empties: readable in peripheral vision. */
+.bar-hp .bar-fill.critical {
+  background: linear-gradient(90deg, #c81e3c, var(--red));
+  box-shadow: 0 0 22px rgba(255, 77, 109, 0.6);
+  animation: pulse 0.9s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  50% { filter: brightness(1.4); }
+}
+
+.bar-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.14em;
+  color: var(--ink);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+}
+
+/* --------------------------------------------------------------------------
+   Overlays (level-up, death, pause)
+   -------------------------------------------------------------------------- */
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: none;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 7, 12, 0.82);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 10;
+}
+
+.overlay.visible { display: flex; }
+
+.overlay-quiet { background: rgba(4, 7, 12, 0.65); }
+
+.overlay-inner {
+  width: 100%;
+  max-width: 860px;
+  text-align: center;
+  animation: rise 180ms ease-out;
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+
+.overlay-head { margin-bottom: 22px; }
+
+.overlay h2 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: clamp(24px, 4vw, 38px);
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  color: var(--cyan-soft);
+  text-shadow: 0 0 34px rgba(79, 216, 255, 0.45);
+  /* The shouty all-caps look was previously baked into the English strings
+   * directly ("PAUSED", "UNMADE"). Moving it to CSS means a translated
+   * string can stay grammatically normal (mixed case, accents intact) and
+   * still get the same dramatic treatment, instead of every translator
+   * having to hand-force caps to match. */
+  text-transform: uppercase;
+}
+
+.overlay h2.dead-title {
+  color: var(--red);
+  text-shadow: 0 0 40px rgba(255, 77, 109, 0.5);
+}
+
+.overlay-sub {
+  margin: 10px 0 0;
+  font-size: 13px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.overlay-sub .queue { color: var(--amber); }
+
+.overlay-sub.is-best {
+  color: var(--amber);
+  font-weight: 700;
+  text-shadow: 0 0 24px rgba(255, 183, 3, 0.5);
+}
+
+.overlay-hint {
+  margin: 18px 0 0;
+  font-size: 12px;
+  letter-spacing: 0.1em;
+  color: var(--ink-dim);
+}
+
+kbd {
+  display: inline-block;
+  min-width: 20px;
+  padding: 2px 6px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+}
+
+/* Upgrade cards */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 14px;
+  pointer-events: auto;
+}
+
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 22px 18px 18px;
+  text-align: left;
+  border: 1px solid var(--panel-line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(20, 28, 42, 0.95), rgba(11, 16, 25, 0.95));
+  color: var(--ink);
+  font: inherit;
+  cursor: pointer;
+  transition: transform 120ms ease, border-color 120ms ease, box-shadow 120ms ease;
+}
+
+.card:hover,
+.card:focus-visible {
+  transform: translateY(-4px);
+  border-color: var(--cyan);
+  box-shadow: 0 14px 40px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(79, 216, 255, 0.35);
+  outline: none;
+}
+
+.card:active { transform: translateY(-1px); }
+
+.card .key {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.card .tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cyan-soft);
+}
+
+.card h3 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.45;
+  color: #b9cbdb;
+}
+
+.card .stacks {
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.12em;
+  color: var(--ink-dim);
+}
+
+.card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 52px;
+  height: 52px;
+  margin-bottom: 2px;
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.card-icon img { image-rendering: pixelated; }
+
+.card-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 2px;
+  padding-top: 8px;
+  border-top: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.card-stat {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.card-stat em {
+  font-style: normal;
+  display: block;
+  font-size: 9px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-bottom: 1px;
+}
+
+/* A colour per upgrade family, so repeat players can read cards at a glance. */
+.card.tag-offence .tag { color: var(--red); }
+.card.tag-offence:hover { border-color: var(--red); box-shadow: 0 14px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(255,77,109,.4); }
+.card.tag-defence .tag { color: var(--green); }
+.card.tag-defence:hover { border-color: var(--green); box-shadow: 0 14px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(125,255,168,.4); }
+.card.tag-mobility .tag { color: var(--amber); }
+.card.tag-mobility:hover { border-color: var(--amber); box-shadow: 0 14px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(255,183,3,.4); }
+.card.tag-utility .tag { color: var(--violet); }
+.card.tag-utility:hover { border-color: var(--violet); box-shadow: 0 14px 40px rgba(0,0,0,.5), 0 0 0 1px rgba(180,92,255,.4); }
+
+/* Run summary */
+.results {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 12px;
+  margin-bottom: 26px;
+}
+
+.result {
+  padding: 14px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.result em {
+  display: block;
+  font-style: normal;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.2em;
+  color: var(--ink-dim);
+  margin-bottom: 6px;
+}
+
+.result strong {
+  font-family: var(--mono);
+  font-size: 22px;
+  font-weight: 700;
+}
+
+.result-major {
+  border-color: var(--panel-line);
+  background: rgba(79, 216, 255, 0.06);
+}
+
+.result-major strong {
+  font-size: 32px;
+  color: var(--cyan-soft);
+}
+
+.btn {
+  pointer-events: auto;
+  padding: 13px 34px;
+  border: 1px solid var(--cyan);
+  border-radius: 8px;
+  background: rgba(79, 216, 255, 0.12);
+  color: var(--ink);
+  font: inherit;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  transition: background 120ms ease, transform 120ms ease;
+}
+
+.btn:hover { background: rgba(79, 216, 255, 0.24); transform: translateY(-2px); }
+.btn:active { transform: none; }
+.btn:focus-visible { outline: 2px solid var(--cyan-soft); outline-offset: 3px; }
+
+#help {
+  position: absolute;
+  bottom: 14px;
+  right: clamp(16px, 3vw, 40px);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--ink-dim);
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+@media (max-width: 620px) {
+  #help { display: none; }
+  .hud-bottom { max-width: none; }
+}
+
+/* Arsenal strip — one chip per owned weapon, tinted to match its projectiles */
+.hud-weapons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 6px;
+}
+
+.hud-weapons .wpn {
+  --wc: var(--cyan);
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid color-mix(in srgb, var(--wc) 55%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--wc) 14%, transparent);
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  color: var(--wc);
+  text-transform: uppercase;
+}
+
+.hud-weapons .wpn b {
+  font-weight: 700;
+  font-size: 9px;
+  opacity: 0.75;
+}
+
+/* Weapon + synergy affordances on upgrade cards */
+.card .badge {
+  align-self: flex-start;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--cyan);
+  color: #06121a;
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.card.is-weapon {
+  border-color: rgba(79, 216, 255, 0.55);
+  background: linear-gradient(180deg, rgba(24, 44, 60, 0.97), rgba(11, 18, 28, 0.97));
+}
+
+.card .synergy {
+  padding-left: 9px;
+  border-left: 2px solid rgba(255, 183, 3, 0.65);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #ffd98a;
+}
+
+/* One accent colour per weapon branch, so a build's cards feel like a family */
+.card.tag-weapon .tag { color: var(--cyan); }
+.card.tag-synergy .tag { color: #ffd166; }
+.card.tag-synergy { border-color: rgba(255, 209, 102, 0.4); }
+.card.tag-splinter .tag { color: #8ff0ff; }
+.card.tag-scattergun .tag { color: #ffb703; }
+.card.tag-lance .tag { color: #b45cff; }
+.card.tag-orbit .tag { color: #7dffa8; }
+.card.tag-quake .tag { color: #ff8a3d; }
+.card.tag-seeker .tag { color: #ff5ec4; }
+.card.tag-ember .tag { color: #ff5a3c; }
+
+/* ==========================================================================
+   HUB — the between-runs screen
+   ========================================================================== */
+
+.screen {
+  position: absolute;
+  inset: 0;
+  display: none;
+  flex-direction: column;
+  padding: clamp(14px, 2.2vw, 30px);
+  background: radial-gradient(ellipse at 50% -10%, #14203a 0%, #070a11 55%, #05070c 100%);
+  z-index: 20;
+  overflow: hidden;
+}
+
+.screen.visible { display: flex; }
+
+/* The Hub is the one screen that's full-bleed rather than padded — the
+ * sketch this layout follows draws right to the edges of the page, with
+ * everything else (brand, dock, sidebars) positioned off that edge instead
+ * of nested in a shared margin. */
+.hub-screen { padding: 0; }
+
+/* Shared width for both sidebars, referenced by .hub-home's own side padding
+ * so the center content clears them by construction rather than by two
+ * numbers that have to be kept in sync by hand. */
+:root {
+  --hub-side-w: clamp(260px, 22vw, 360px);
+  /* The loadout side is wider than the leaderboard side — it has to hold two
+   * columns of equipment cards (see .loadout-columns), not a single ranked
+   * list. */
+  --hub-loadout-w: clamp(320px, 30vw, 460px);
+}
+
+.hub-brand {
+  position: absolute;
+  top: clamp(14px, 2.2vw, 30px);
+  left: clamp(14px, 2.2vw, 30px);
+  z-index: 25;
+}
+
+.hub-brand h1 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: clamp(22px, 2.8vw, 32px);
+  font-weight: 700;
+  letter-spacing: 0.3em;
+  color: var(--cyan-soft);
+  text-shadow: 0 0 40px rgba(79, 216, 255, 0.4);
+}
+
+.hub-sub {
+  margin: 6px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+}
+
+/* Boxed pill, top-center — the sketch draws the tab bar as its own bordered
+ * shape rather than a strip spanning the page. */
+.hub-tabdock {
+  position: absolute;
+  top: clamp(14px, 2.2vw, 30px);
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 25;
+  max-width: calc(100% - var(--hub-side-w) - var(--hub-loadout-w) - 40px);
+}
+
+.hub-account-corner {
+  position: absolute;
+  top: clamp(14px, 2.2vw, 30px);
+  /* Clears the floating settings gear, which sits further right at the same
+   * inset — see #settings-btn. */
+  right: calc(38px + clamp(14px, 2.2vw, 30px) + 16px);
+  z-index: 25;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.hub-account-corner:empty { display: none; }
+
+/* Materials ledger */
+.hub-materials { display: flex; flex-wrap: wrap; justify-content: center; gap: 8px; }
+
+.mat {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.mat i {
+  width: 9px; height: 9px;
+  border-radius: 2px;
+  background: var(--mc);
+  transform: rotate(45deg);
+  box-shadow: 0 0 10px var(--mc);
+}
+
+.mat em { font-style: normal; color: var(--ink-dim); letter-spacing: 0.06em; }
+.mat b { color: var(--ink); font-size: 13px; }
+.mat.unseen { opacity: 0.4; }
+.mat.unseen i { background: #444c5a; box-shadow: none; }
+
+/* --- Left: collapsible side panel (the Leaderboard) --- */
+
+.hub-side-panel {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--hub-side-w);
+  padding: 90px 18px 20px;
+  border-right: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(10, 15, 24, 0.55);
+  overflow: hidden;
+  transition: width 200ms ease, padding-left 200ms ease, padding-right 200ms ease;
+  z-index: 15;
+}
+
+.hub-side-panel.collapsed {
+  width: 46px;
+  padding-left: 10px;
+  padding-right: 10px;
+}
+
+/* display:none rather than opacity:0 — a faded-out heading still occupies
+ * its natural flex width, which at the collapsed 46px shell pushed the
+ * toggle button clear out of the (overflow:hidden) container, making it
+ * impossible to click back open. Removed from layout, it can't do that. */
+.hub-side-panel.collapsed .hub-side-panel-head h2,
+.hub-side-panel.collapsed .hub-side-panel-body {
+  display: none;
+}
+
+.hub-side-panel.collapsed .hub-side-panel-head { justify-content: center; }
+.hub-side-panel.collapsed .hub-side-panel-toggle { transform: rotate(180deg); }
+
+.hub-side-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.hub-side-panel-head h2 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cyan-soft);
+  white-space: nowrap;
+  transition: opacity 150ms ease;
+}
+
+.hub-side-panel-toggle {
+  flex: none;
+  width: 24px;
+  height: 24px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink-dim);
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: transform 200ms ease, color 120ms ease, border-color 120ms ease;
+}
+
+.hub-side-panel-toggle:hover { color: var(--ink); border-color: rgba(255, 255, 255, 0.3); }
+
+.hub-side-panel-body {
+  height: 100%;
+  overflow-y: auto;
+  transition: opacity 150ms ease;
+}
+
+/* The sidebar leaderboard is the same LeaderboardPanel as the full tab, just
+ * in a much narrower box — trim the search/lookup chrome that only makes
+ * sense with room to spare, and let the ranked list itself scroll. */
+.leaderboard-side .lb-search,
+.leaderboard-side .lb-lookup { display: none; }
+.leaderboard-side .lb-list { gap: 4px; }
+.leaderboard-side .lb-row { padding: 5px 8px; font-size: 11px; gap: 6px; }
+.leaderboard-side .lb-stat + .lb-stat { display: none; }
+
+/* --- Center: the persistent home view --- */
+
+.hub-home {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  padding: 90px calc(var(--hub-loadout-w) + 30px) 30px calc(var(--hub-side-w) + 30px);
+  z-index: 5;
+}
+
+.hub-playername {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink);
+  /* Reserved even when empty (signed out, or not yet named) so the portrait
+   * doesn't hop up a line the moment a name loads in. */
+  min-height: 1.3em;
+}
+
+.hub-portrait {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: min(30vh, 220px);
+  height: min(30vh, 220px);
+}
+
+.hub-portrait img.crew-sprite {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  filter: drop-shadow(0 20px 40px rgba(0, 0, 0, 0.5));
+}
+
+.hub-home .btn-start { width: auto; padding: 16px 52px; font-size: 15px; }
+
+.difficulty-picker {
+  display: flex;
+  gap: 4px;
+  padding: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(10, 15, 24, 0.55);
+}
+
+.difficulty-btn {
+  padding: 7px 14px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.difficulty-btn:hover { color: var(--ink); background: rgba(255, 255, 255, 0.05); }
+
+/* Each tier tints toward a warmer, more dangerous color once selected —
+ * common convention for a difficulty ladder, and it makes One-Hit Death
+ * read as genuinely different from the other three, not just one more
+ * segment along the same row. */
+.difficulty-btn.difficulty-normal.active {
+  color: #7dffa8; border-color: rgba(125, 255, 168, 0.4); background: rgba(125, 255, 168, 0.1);
+}
+.difficulty-btn.difficulty-medium.active {
+  color: #ffd166; border-color: rgba(255, 209, 102, 0.4); background: rgba(255, 209, 102, 0.1);
+}
+.difficulty-btn.difficulty-hard.active {
+  color: #ff8a3d; border-color: rgba(255, 138, 61, 0.45); background: rgba(255, 138, 61, 0.12);
+}
+.difficulty-btn.difficulty-oneHit.active {
+  color: #ff4d6d; border-color: rgba(255, 77, 109, 0.5); background: rgba(255, 77, 109, 0.14);
+}
+
+/* --- Right: the equipped loadout, with editing delegated to Stash --- */
+
+.hub-loadout-panel {
+  position: absolute;
+  inset: 0 0 0 auto;
+  width: var(--hub-loadout-w);
+  padding: 90px 18px 20px;
+  border-left: 1px solid rgba(255, 255, 255, 0.07);
+  background: rgba(10, 15, 24, 0.55);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  z-index: 15;
+}
+
+.hub-loadout-panel h2 {
+  margin: 0 0 12px;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.24em;
+  text-transform: uppercase;
+  color: var(--cyan-soft);
+}
+
+.hub-loadout-edit { margin-top: 12px; }
+
+.loadout-presets {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.preset-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+
+.preset-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
+  padding: 5px 4px 5px 8px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.preset-row.is-current { background: rgba(79, 216, 255, 0.08); }
+
+.preset-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  text-align: left;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.preset-name:disabled { color: var(--cyan-soft); cursor: default; }
+.preset-name:not(:disabled):hover { color: var(--cyan-soft); text-decoration: underline; }
+
+/* Only the row being hovered (or its own descendant, e.g. after a click)
+ * reveals its action buttons — five presets' worth of Update/Rename/Delete
+ * sitting fully visible at once is more visual noise than a narrow sidebar
+ * can afford. */
+.preset-actions {
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 120ms ease;
+}
+.preset-row:hover .preset-actions,
+.preset-row:focus-within .preset-actions { opacity: 1; }
+.preset-actions .btn-mini { flex: none; padding: 3px 7px; font-size: 9px; }
+
+.preset-save { align-self: flex-start; }
+.preset-limit { margin: 0; font-size: 10.5px; color: var(--ink-dim); }
+
+/* --- The tab overlay: Crew / Forge / Stash / Outpost / etc. --- */
+
+.hub-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: clamp(14px, 2.2vw, 30px);
+  padding-top: 80px;
+  background: rgba(4, 7, 12, 0.72);
+  backdrop-filter: blur(4px);
+  -webkit-backdrop-filter: blur(4px);
+  z-index: 30;
+}
+
+.hub-overlay[hidden] { display: none; }
+
+.hub-overlay-panel {
+  position: relative;
+  width: 100%;
+  max-width: 980px;
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  padding: 20px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 16px;
+  background: rgba(10, 15, 24, 0.92);
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8);
+  animation: rise 160ms ease-out;
+}
+
+.hub-overlay-close {
+  position: absolute;
+  top: 14px;
+  right: 14px;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  z-index: 1;
+}
+
+.hub-overlay-close:hover { color: var(--ink); border-color: rgba(255, 255, 255, 0.3); }
+
+.recipes, .stash, .loadout, .outpost {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.stash-filters {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+}
+
+.stash-filter-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.stash-filter-btn {
+  padding: 5px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink-dim);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.stash-filter-btn:hover { color: var(--ink); border-color: rgba(255, 255, 255, 0.3); }
+
+.stash-filter-btn.active {
+  color: var(--cyan-soft);
+  border-color: rgba(79, 216, 255, 0.4);
+  background: rgba(79, 216, 255, 0.1);
+}
+
+/* Shared scroll behaviour for every hub pane.
+ *
+ * `overscroll-behavior: contain` is the one that actually changes how
+ * scrolling FEELS: without it, reaching the end of a pane chains the scroll
+ * to the page behind it, which on a fixed-height page means the gesture just
+ * stops dead. Contained, the pane absorbs the overscroll and the motion ends
+ * where the content does.
+ *
+ * `scrollbar-gutter: stable` reserves the scrollbar's width whether or not it
+ * is showing, so a pane whose content crosses the overflow threshold (a
+ * crafted item appearing, a drone bought) no longer reflows its whole layout
+ * sideways by 8px at the moment you interact with it.
+ */
+.recipes, .stash, .loadout, .outpost, .crew {
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  scroll-behavior: smooth;
+  /* Isolates each pane's repaints from the rest of the hub. */
+  contain: paint;
+}
+
+/* Scrollbars, so long lists don't look broken */
+.recipes::-webkit-scrollbar, .stash::-webkit-scrollbar, .loadout::-webkit-scrollbar,
+.outpost::-webkit-scrollbar, .crew::-webkit-scrollbar { width: 8px; }
+.recipes::-webkit-scrollbar-thumb, .stash::-webkit-scrollbar-thumb, .loadout::-webkit-scrollbar-thumb,
+.outpost::-webkit-scrollbar-thumb, .crew::-webkit-scrollbar-thumb {
+  background: rgba(79, 216, 255, 0.22); border-radius: 4px;
+}
+
+.empty {
+  margin: 0;
+  padding: 18px 12px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+  text-align: center;
+}
+
+/* Rarity picker */
+.rarity-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 12px;
+}
+
+.rarity-btn {
+  --rc: var(--ink-dim);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 7px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: border-color 120ms, color 120ms, background 120ms;
+}
+
+.rarity-btn small { font-size: 9px; opacity: 0.7; }
+.rarity-btn:hover { border-color: var(--rc); color: var(--rc); }
+.rarity-btn.active {
+  border-color: var(--rc);
+  color: var(--rc);
+  background: color-mix(in srgb, var(--rc) 14%, transparent);
+}
+
+.forge-flash {
+  align-self: center;
+  margin-left: auto;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--rc);
+  animation: rise 200ms ease-out;
+}
+
+/* Recipe rows */
+.recipe {
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.recipe.locked { opacity: 0.55; }
+
+.recipe-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.recipe-head > div { flex: 1; min-width: 0; }
+
+.recipe-head h3 { margin: 0; font-size: 14px; font-weight: 650; }
+
+.recipe-head .slot {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-top: 1px;
+}
+
+.recipe-blurb {
+  margin: 6px 0 9px;
+  font-size: 12px;
+  line-height: 1.45;
+  color: #a9bccd;
+}
+
+.locked-why {
+  margin: 8px 0 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--amber);
+}
+
+.cost-row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+
+.cost {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  color: var(--ink-dim);
+}
+
+.cost i {
+  width: 7px; height: 7px;
+  background: var(--mc);
+  transform: rotate(45deg);
+}
+
+.cost.short { color: var(--red); }
+
+.btn-craft {
+  width: 100%;
+  padding: 8px;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+}
+
+.btn-craft:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+  border-color: rgba(255, 255, 255, 0.14);
+  background: transparent;
+}
+
+.btn-craft:disabled:hover { transform: none; background: transparent; }
+
+/* Gear cards */
+.item {
+  --rc: var(--ink-dim);
+  padding: 11px 12px;
+  border: 1px solid color-mix(in srgb, var(--rc) 45%, transparent);
+  border-radius: 10px;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--rc) 9%, rgba(12, 18, 28, 0.9)),
+    rgba(10, 15, 24, 0.9));
+}
+
+.item.is-equipped { box-shadow: 0 0 0 1px var(--rc), 0 0 22px -6px var(--rc); }
+
+.item header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 7px;
+}
+
+.item header > div { flex: 1; min-width: 0; }
+
+.item h4 { margin: 0; font-size: 13.5px; font-weight: 650; color: var(--ink); }
+
+.item .rarity {
+  display: block;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--rc);
+  margin-top: 1px;
+}
+
+.item-stats { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 3px; }
+
+.item-stats li { font-size: 11.5px; line-height: 1.4; }
+.item-stats .base { color: #c6d7e6; }
+.item-stats .affix { color: #90a6ba; padding-left: 8px; border-left: 2px solid color-mix(in srgb, var(--rc) 55%, transparent); }
+.item-stats .affix em { font-style: normal; font-weight: 650; color: var(--rc); }
+
+.item-actions { display: flex; gap: 6px; margin-top: 10px; }
+
+.btn-mini {
+  flex: 1;
+  padding: 5px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--ink);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  cursor: pointer;
+  transition: background 120ms, border-color 120ms;
+}
+
+.btn-mini:hover { background: rgba(255, 255, 255, 0.1); border-color: var(--cyan); }
+.btn-mini:disabled { opacity: 0.45; cursor: default; }
+.btn-mini:disabled:hover { background: rgba(255, 255, 255, 0.04); border-color: rgba(255,255,255,0.16); }
+.btn-danger:hover { border-color: var(--red); color: var(--red); }
+
+/* Loadout slots — two columns (Weapon/Necklace/Gloves left, Suit/Belt/Boots
+ * right), matching the equipment screen this is modelled on. `.loadout`
+ * itself is the shared scrolling flex column above; this is its one child,
+ * so the gap that used to space the slot-cards directly now has to be
+ * reproduced inside each column instead. */
+.loadout-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  align-items: start;
+}
+
+.loadout-col {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.slot-card {
+  padding: 11px;
+  border: 1px dashed rgba(255, 255, 255, 0.14);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.slot-card.filled { border-style: solid; border-color: rgba(255, 255, 255, 0.09); }
+
+.slot-card header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.slot-card h4 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.slot-card header .btn-mini { flex: 0 0 auto; }
+.slot-blurb { margin: 0 0 6px; font-size: 11.5px; color: #7f93ab; line-height: 1.4; }
+.slot-empty { margin: 0; font-family: var(--mono); font-size: 11px; color: #5c6b7d; }
+
+.loadout-summary {
+  margin: 12px 0;
+  padding: 12px;
+  border: 1px solid rgba(79, 216, 255, 0.18);
+  border-radius: 10px;
+  background: rgba(79, 216, 255, 0.05);
+}
+
+.loadout-summary h3 {
+  margin: 0 0 7px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cyan-soft);
+}
+
+.summary-stats, .summary-weapons, .summary-flags {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #b9cbdb;
+}
+
+.summary-weapons { color: var(--cyan-soft); font-family: var(--mono); font-size: 11px; }
+.summary-flags { color: var(--amber); font-family: var(--mono); font-size: 11px; }
+
+.btn-start {
+  width: 100%;
+  padding: 15px;
+  font-size: 15px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.btn-reset {
+  margin-top: 10px;
+  padding: 6px;
+  border: none;
+  background: none;
+  color: #55636f;
+  font: inherit;
+  font-size: 10.5px;
+  letter-spacing: 0.06em;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+.btn-reset:hover { color: var(--red); }
+
+.btn-ghost {
+  border-color: rgba(255, 255, 255, 0.2);
+  background: transparent;
+}
+
+.btn-ghost:hover { background: rgba(255, 255, 255, 0.08); }
+
+.overlay-actions { display: flex; gap: 10px; justify-content: center; flex-wrap: wrap; }
+
+/* The haul panel on the death screen */
+.haul {
+  margin: 0 0 20px;
+  padding: 14px;
+  border: 1px solid rgba(255, 183, 3, 0.22);
+  border-radius: 10px;
+  background: rgba(255, 183, 3, 0.05);
+}
+
+.haul h3 {
+  margin: 0 0 9px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--amber);
+}
+
+.haul-row { display: flex; flex-wrap: wrap; gap: 10px; justify-content: center; }
+
+.haul-mat {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+}
+
+.haul-mat i {
+  width: 8px; height: 8px;
+  background: var(--mc);
+  transform: rotate(45deg);
+  box-shadow: 0 0 8px var(--mc);
+}
+
+.haul-nodes { font-family: var(--mono); font-size: 12px; color: var(--amber); }
+.haul-empty { margin: 0; font-size: 12px; color: var(--ink-dim); }
+
+/* End-of-run performance chest */
+.perf-chest {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 12px;
+  margin: 4px 0 22px;
+}
+
+.perf-chest-box {
+  --tc: #8fa4bd;
+  position: relative;
+  width: 64px;
+  height: 50px;
+  pointer-events: none;
+}
+
+.perf-chest-glow {
+  position: absolute;
+  inset: -30px;
+  background: radial-gradient(circle, color-mix(in srgb, var(--tc) 55%, transparent) 0%, transparent 70%);
+  opacity: 0.6;
+  transition: background 300ms ease, opacity 300ms ease;
+  animation: chestPulse 2.2s ease-in-out infinite;
+}
+
+@keyframes chestPulse {
+  50% { opacity: 0.35; }
+}
+
+.perf-chest-icon {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  color: var(--tc);
+  filter: drop-shadow(0 0 14px color-mix(in srgb, var(--tc) 70%, transparent));
+  transition: transform 260ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.perf-chest-box.opened .perf-chest-icon {
+  transform: scale(1.25) rotate(-4deg);
+  animation: chestPop 420ms cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+.perf-chest-box.opened .perf-chest-glow {
+  opacity: 0.9;
+  animation: none;
+}
+
+@keyframes chestPop {
+  0%   { transform: scale(1) rotate(0deg); }
+  40%  { transform: scale(1.4) rotate(-8deg); }
+  100% { transform: scale(1.25) rotate(-4deg); }
+}
+
+.btn-chest {
+  padding: 10px 26px;
+  font-size: 13px;
+}
+
+.btn-chest:disabled {
+  opacity: 0.55;
+  cursor: default;
+  transform: none;
+  background: rgba(79, 216, 255, 0.08);
+}
+
+.perf-chest-contents {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-height: 20px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  opacity: 0;
+  transform: translateY(6px);
+  transition: opacity 260ms ease, transform 260ms ease;
+}
+
+.perf-chest-contents.show { opacity: 1; transform: none; }
+
+.perf-chest-contents .chest-gear {
+  --tc: #9fb3c8;
+  color: var(--tc);
+  font-weight: 700;
+  text-transform: capitalize;
+}
+
+/* Run HUD: materials picked up so far */
+.hud-run-mats { display: flex; flex-wrap: wrap; gap: 9px; margin-bottom: 5px; }
+
+.hud-run-mats .rm {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-dim);
+}
+
+.hud-run-mats .rm i {
+  width: 6px; height: 6px;
+  background: var(--mc);
+  transform: rotate(45deg);
+}
+
+.hud-run-mats .rm b { color: var(--ink); font-weight: 600; }
+
+@media (max-width: 1080px) {
+  .hub-body { grid-template-columns: 1fr; overflow-y: auto; }
+  .hub-col { max-height: none; }
+  .recipes, .stash, .loadout, .outpost { overflow: visible; }
+}
+
+/* ==========================================================================
+   SETTINGS — floating audio panel, reachable from Hub and in-run alike
+   ========================================================================== */
+
+#settings-btn {
+  position: absolute;
+  top: clamp(14px, 2.2vw, 30px);
+  right: clamp(14px, 2.2vw, 30px);
+  z-index: 40;
+  width: 38px;
+  height: 38px;
+  padding: 0;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 999px;
+  background: rgba(10, 15, 24, 0.75);
+  color: var(--ink);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: border-color 120ms, background 120ms, transform 120ms;
+}
+
+#settings-btn:hover {
+  border-color: var(--cyan);
+  background: rgba(79, 216, 255, 0.14);
+  transform: rotate(25deg);
+}
+
+.settings-panel {
+  position: absolute;
+  top: calc(clamp(14px, 2.2vw, 30px) + 46px);
+  right: clamp(14px, 2.2vw, 30px);
+  z-index: 40;
+  width: 260px;
+  padding: 14px;
+  border: 1px solid rgba(79, 216, 255, 0.22);
+  border-radius: 12px;
+  background: rgba(8, 12, 20, 0.96);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.5);
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateY(-6px);
+  visibility: hidden;
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.settings-panel.visible {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--cyan-soft);
+}
+
+.settings-head button {
+  border: none;
+  background: none;
+  color: var(--ink-dim);
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 4px;
+}
+
+.settings-head button:hover { color: var(--ink); }
+
+.settings-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  font-size: 13px;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.settings-row span:first-child { flex: 0 0 56px; color: #a9bccd; }
+
+.settings-row input[type="checkbox"] {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--cyan);
+}
+
+.settings-row-volume input[type="range"] {
+  flex: 1;
+  accent-color: var(--cyan);
+}
+
+.settings-value {
+  flex: 0 0 36px;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.settings-hint {
+  margin: 8px 0 0;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--ink-dim);
+}
+
+/* ==========================================================================
+   HUB TABS — Forge / Stash / Outpost, sharing the wider right-hand column
+   ========================================================================== */
+
+.hub-tabbar {
+  display: flex;
+  /* Never wraps, at any width. It used to (with a max-width driven by how
+   * much room the side panels left over), which meant "Friends" — the tab
+   * that happens to run out of row first — dropped to its own second line at
+   * medium viewport widths where the dock's max-width was narrower than all
+   * seven tabs need but still much wider than the mobile breakpoint. A
+   * scrollable single row has no such gap: it degrades the same way at every
+   * width, and doesn't need a second, width-specific fix for other languages
+   * whose tab labels run longer than English's. */
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+  gap: 4px;
+  padding: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 999px;
+  background: rgba(10, 15, 24, 0.72);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+}
+
+.hub-tabbar::-webkit-scrollbar { display: none; }
+
+.hub-tab {
+  position: relative;
+  flex: none;   /* never compressed by the now-scrollable row's overflow */
+  padding: 7px 16px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit;
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  cursor: pointer;
+  transition: color 120ms ease, background 120ms ease, border-color 120ms ease;
+}
+
+.hub-tab:hover { color: var(--ink); background: rgba(255, 255, 255, 0.04); }
+
+.hub-tab.active {
+  color: var(--cyan-soft);
+  border-color: rgba(79, 216, 255, 0.35);
+  background: rgba(79, 216, 255, 0.08);
+}
+
+.hub-tab .count { color: inherit; opacity: 0.8; font-weight: 400; }
+
+.hub-tab .ping {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 5px;
+  border-radius: 999px;
+  background: var(--amber);
+  box-shadow: 0 0 8px rgba(255, 183, 3, 0.8);
+  vertical-align: middle;
+  animation: pingPulse 1.4s ease-in-out infinite;
+}
+
+@keyframes pingPulse {
+  50% { opacity: 0.35; transform: scale(0.8); }
+}
+
+.hub-tab-panel {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* A class selector with a `display` of its own beats the browser's default
+   `[hidden] { display: none }` — same origin, and specificity favours the
+   more specific selector regardless of which one is "supposed" to win. That
+   silently kept all three tab panels (Forge/Stash/Outpost) stacked on top of
+   each other at all times: switching tabs correctly toggled the `hidden`
+   attribute in JS, but nothing ever actually disappeared, and Forge's own
+   scroll container was fighting the other two panels' content occupying the
+   same space underneath it. This rule has to win that fight explicitly. */
+.hub-tab-panel[hidden] {
+  display: none;
+}
+
+/* Anchors the Outpost's floating collect-burst layer, which is positioned
+   absolutely so the tab's 1-second re-render of .outpost can't wipe it. */
+.hub-tab-panel[data-tab-panel="outpost"] {
+  position: relative;
+}
+
+/* ==========================================================================
+   OUTPOST — the passive colony
+   ========================================================================== */
+
+/* The scene: a room the player looks into, not a diorama floating in space.
+   A wall band and a floor band (split via .outpost-wall/.outpost-floor,
+   seamed by .outpost-baseboard) give it a contained space; an ops terminal
+   sits fixed centre-back on the floor, each drone tier gets its own station
+   spread left/centre/right, and drones shuttle between their station and the
+   terminal on a continuous loop. */
+.outpost-scene {
+  position: relative;
+  height: 210px;
+  margin-bottom: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  overflow: hidden;
+  flex-shrink: 0;
+}
+
+.outpost-scene.empty .empty-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 10px;
+  transform: translateX(-50%);
+  width: 60%;
+  margin: 0;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+  z-index: 3;
+}
+
+.outpost-wall {
+  position: absolute;
+  left: 0; right: 0; top: 0;
+  height: 57%;
+  background:
+    radial-gradient(ellipse at 50% 0%, rgba(79, 140, 216, 0.12), transparent 70%),
+    linear-gradient(180deg, #232c3d 0%, #1b2230 100%);
+}
+
+.outpost-floor {
+  position: absolute;
+  left: 0; right: 0; bottom: 0;
+  height: 43%;
+  background:
+    radial-gradient(ellipse at 50% 100%, rgba(255, 183, 3, 0.1), transparent 65%),
+    repeating-linear-gradient(90deg, rgba(255, 255, 255, 0.025) 0px, rgba(255, 255, 255, 0.025) 1px, transparent 1px, transparent 34px),
+    linear-gradient(180deg, #2a2118 0%, #191410 100%);
+}
+
+.outpost-baseboard {
+  position: absolute;
+  left: 0; right: 0; top: 57%;
+  height: 3px;
+  margin-top: -1px;
+  background: linear-gradient(90deg, transparent, rgba(255, 183, 3, 0.4), transparent);
+  box-shadow: 0 0 10px rgba(255, 183, 3, 0.15);
+}
+
+/* Wall flavour — a viewport top-left and a small trophy shelf top-right,
+   pure room dressing except the shelf's pips, which count real upgrade
+   levels bought (see _outpostScene). */
+.outpost-window {
+  position: absolute;
+  top: 12px;
+  left: 6%;
+  width: 34px;
+  height: 34px;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.3));
+}
+
+.outpost-window svg { display: block; width: 100%; height: 100%; }
+
+.outpost-shelf {
+  position: absolute;
+  top: 15px;
+  right: 6%;
+  width: 62px;
+  height: 10px;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.3));
+}
+
+.outpost-shelf svg { display: block; width: 100%; height: 100%; }
+
+/* The ops terminal — fixed size, fixed position; only the screen's internal
+   fill level changes. A tank filling is a clearer "resources are accruing"
+   signal than a whole structure growing, and it reads at a glance against
+   the collect panel's `Xh / Yh` number just below it. */
+.outpost-terminal {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  width: 46px;
+  height: 84px;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.4));
+  z-index: 1;
+}
+
+.outpost-terminal svg { display: block; width: 100%; height: 100%; }
+
+.term-led.on { animation: termLedPulse 1.8s ease-in-out infinite; }
+
+@keyframes termLedPulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.45; }
+}
+
+/* The one-shot "just drained" flash fired right after a collect click. */
+.outpost-terminal.collected { animation: terminalCollected 550ms ease-out; }
+
+@keyframes terminalCollected {
+  0%   { transform: translateX(-50%) scale(1); filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.4)) brightness(1); }
+  30%  { transform: translateX(-50%) scale(0.93); filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.4)) brightness(1.6); }
+  100% { transform: translateX(-50%) scale(1); filter: drop-shadow(0 3px 5px rgba(0, 0, 0, 0.4)) brightness(1); }
+}
+
+.outpost-nodes, .outpost-drones {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+}
+
+/* One station per owned tier, sat on the floor — the furniture the drones
+   above are actually working at. */
+.outpost-node {
+  position: absolute;
+  bottom: 8px;
+  width: 30px;
+  height: 30px;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+}
+
+.outpost-node svg { display: block; width: 100%; height: 100%; }
+
+.drone-more {
+  position: absolute;
+  bottom: 40px;
+  transform: translateX(-50%);
+  font-family: var(--mono);
+  font-size: 10px;
+  color: var(--ink-dim);
+  background: rgba(10, 15, 24, 0.6);
+  padding: 1px 5px;
+  border-radius: 999px;
+  z-index: 3;
+}
+
+/* Each drone loops: work its station (a little shake), fly to the terminal,
+   drop off (a pulse), fly back, idle, repeat. --node-x/-y and --term-x/-y
+   are the two anchor points set inline per drone (jittered slightly around
+   its tier's station so several drones at once read as distinct workers,
+   not a stack); --dur/--delay are randomised per drone so a squad never
+   moves in lockstep.
+   The scene rebuilds every second (the live ticker) which would normally
+   restart every animation from 0% — --delay is instead computed as a
+   *negative* offset derived from the real clock each render, so a freshly
+   rebuilt drone resumes mid-cycle instead of visibly snapping back. */
+.drone {
+  --node-x: 50%;
+  --node-y: 14px;
+  --term-x: 50%;
+  --term-y: 74px;
+  --dur: 7s;
+  --delay: 0s;
+  position: absolute;
+  left: var(--node-x);
+  bottom: var(--node-y);
+  width: 20px;
+  height: 20px;
+  margin-left: -10px;
+  animation: outpostDroneCycle var(--dur) linear infinite;
+  animation-delay: var(--delay);
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+  z-index: 2;
+}
+
+.drone svg { display: block; width: 100%; height: 100%; }
+
+@keyframes outpostDroneCycle {
+  /* working: parked at the station, a little shake in place */
+  0%   { left: var(--node-x); bottom: var(--node-y); transform: translateY(0) scale(1) rotate(0deg); }
+  5%   { transform: translateY(0) scale(1.08) rotate(-10deg); }
+  11%  { transform: translateY(0) scale(1.08) rotate(8deg); }
+  17%  { transform: translateY(0) scale(1) rotate(0deg); }
+  24%  { left: var(--node-x); bottom: var(--node-y); transform: translateY(0) scale(1) rotate(0deg); }
+  /* outbound walk, station -> terminal, with a small arc hop at the midpoint */
+  32%  { left: calc((var(--node-x) + var(--term-x)) / 2); transform: translateY(-16px) scale(0.92) rotate(0deg); }
+  /* deposit: parked at the terminal, a pulse */
+  40%  { left: var(--term-x); bottom: var(--term-y); transform: translateY(0) scale(1) rotate(0deg); }
+  46%  { transform: translateY(0) scale(1.22) rotate(0deg); }
+  52%  { left: var(--term-x); bottom: var(--term-y); transform: translateY(0) scale(1) rotate(0deg); }
+  /* return walk, terminal -> station, same arc */
+  60%  { left: calc((var(--node-x) + var(--term-x)) / 2); transform: translateY(-16px) scale(0.92) rotate(0deg); }
+  68%  { left: var(--node-x); bottom: var(--node-y); transform: translateY(0) scale(1) rotate(0deg); }
+  /* idle before the next work pass */
+  84%  { transform: translateY(-2px) scale(1) rotate(0deg); }
+  100% { left: var(--node-x); bottom: var(--node-y); transform: translateY(0) scale(1) rotate(0deg); }
+}
+
+/* Collect panel */
+.outpost-collect {
+  position: relative;
+  flex-shrink: 0;
+  padding: 12px;
+  margin-bottom: 10px;
+  border: 1px solid rgba(255, 183, 3, 0.2);
+  border-radius: 10px;
+  background: rgba(255, 183, 3, 0.05);
+}
+
+.outpost-rate {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink);
+  margin-bottom: 8px;
+}
+
+.outpost-cap {
+  font-size: 10px;
+  color: var(--ink-dim);
+  letter-spacing: 0.04em;
+}
+
+/* Progress bar for the offline cap — the same fraction the stockpile's scale
+   renders visually, spelled out as a number for anyone who wants the exact figure. */
+.outpost-cap-bar {
+  position: relative;
+  height: 18px;
+  margin-bottom: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+
+.outpost-cap-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #a67c1f, var(--amber));
+  transition: width 400ms ease-out;
+}
+
+.outpost-cap-fill.maxed {
+  background: linear-gradient(90deg, #b3401f, var(--red));
+}
+
+.outpost-cap-label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: #f4ede0;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+
+.outpost-pending {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  min-height: 22px;
+}
+
+.pending-mat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 14px;
+  font-weight: 700;
+  color: var(--amber);
+}
+
+.pending-empty { font-size: 12px; font-weight: 400; color: var(--ink-dim); }
+
+.btn-collect {
+  width: 100%;
+  padding: 10px;
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+/* The collect payoff: floating "+N" text rising out of the pending readout.
+   Lives in a layer sibling to .outpost (see index.html) so the tab's own
+   1-second re-render can never wipe it mid-animation. */
+.outpost-burst-layer {
+  position: absolute;
+  left: 12px;
+  right: 12px;
+  /* `top` is set inline at spawn time (see Hub._spawnCollectBurst) to the
+     pending-materials row's current on-screen position — a fixed value here
+     would drift whenever the scene's height or the tab's scroll position
+     changes. */
+  display: flex;
+  justify-content: center;
+  pointer-events: none;
+  z-index: 5;
+}
+
+.outpost-burst {
+  display: flex;
+  gap: 12px;
+  animation: burstRise 1.4s ease-out forwards;
+}
+
+.burst-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-family: var(--mono);
+  font-size: 15px;
+  font-weight: 700;
+  color: var(--amber);
+  text-shadow: 0 2px 6px rgba(0, 0, 0, 0.5);
+}
+
+.burst-bonus {
+  color: var(--exotic, #ff5ec4);
+}
+
+.outpost-burst.is-bonus .burst-line { color: var(--exotic, #ff5ec4); }
+
+@keyframes burstRise {
+  0%   { transform: translateY(0); opacity: 0; }
+  15%  { opacity: 1; }
+  100% { transform: translateY(-46px); opacity: 0; }
+}
+
+/* Drone shop / upgrade rows — reuse the recipe-row visual language */
+.outpost-section { margin-bottom: 4px; }
+
+.outpost-section h3 {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--cyan-soft);
+}
+
+.outpost-row {
+  padding: 11px 12px;
+  margin-bottom: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.outpost-row.locked { opacity: 0.55; }
+
+.outpost-row-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.outpost-row-head h4 { flex: 1; margin: 0; font-size: 13.5px; font-weight: 650; color: var(--ink); }
+
+.icon-drone {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 26px;
+  height: 26px;
+  padding: 3px;
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.icon-drone svg { display: block; width: 100%; height: 100%; }
+
+.owned-tag, .locked-tag {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.locked-tag { color: var(--red); }
+
+.outpost-row-blurb {
+  margin: 5px 0 9px;
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #a9bccd;
+}
+
+.outpost-row .cost-row { margin-bottom: 9px; }
+
+.btn-buy {
+  width: 100%;
+  padding: 7px;
+  font-size: 11px;
+}
+
+/* ==========================================================================
+   ICONS — shared by materials, gear, and the Outpost's cost rows
+   ========================================================================== */
+
+.icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: var(--icon-size, 20px);
+  height: var(--icon-size, 20px);
+}
+
+.icon svg { display: block; width: 100%; height: 100%; overflow: visible; }
+
+/* Materials: the shape and colour already carry the identity, so the
+   container stays plain — a badge here would just compete with the tier
+   colour already on the chip it sits inside. */
+.icon-material { filter: drop-shadow(0 0 3px rgba(0, 0, 0, 0.4)); }
+
+/* Gear: a rarity-tinted badge behind the shape is what actually satisfies
+   "styled to match rarity tier" — the shape itself (a weapon's own colour,
+   or the rarity colour for armour/trinkets) says *what it is*; the badge
+   says *how good it is*, the same two things a real inventory icon does. */
+.icon-gear {
+  border-radius: 8px;
+  padding: 3px;
+  background: color-mix(in srgb, var(--rc) 15%, rgba(10, 15, 24, 0.6));
+  border: 1px solid color-mix(in srgb, var(--rc) 55%, transparent);
+  box-shadow: 0 0 10px -2px color-mix(in srgb, var(--rc) 60%, transparent);
+}
+
+.icon-gear.rarity-exotic {
+  box-shadow: 0 0 14px -1px color-mix(in srgb, var(--rc) 75%, transparent);
+}
+
+/* Chest reveal on the Game Over screen: a gear icon inline with its name. */
+.chest-gear {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chest-mat {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* ==========================================================================
+   CREW — the Driftwalker roster
+   ========================================================================== */
+
+.crew {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(232px, 1fr));
+  gap: 10px;
+  align-content: start;
+  /* THE BUG: .crew was never given these, so ten character cards overflowed
+     the tab panel with no scrollbar and the bottom of the roster was simply
+     unreachable. `min-height: 0` is the load-bearing half — without it a flex
+     child refuses to shrink below its content size, so `overflow-y` would
+     have had nothing to scroll. */
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.crew-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 11px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.09);
+  border-left: 3px solid var(--cc, #4fd8ff);
+  border-radius: 10px;
+  background: linear-gradient(180deg,
+    color-mix(in srgb, var(--cc, #4fd8ff) 9%, transparent),
+    rgba(255, 255, 255, 0.02));
+  cursor: pointer;
+  transition: border-color 130ms ease, transform 130ms ease, background 130ms ease;
+}
+
+.crew-card:hover { transform: translateY(-2px); }
+
+.crew-card.is-selected {
+  border-color: var(--cc, #4fd8ff);
+  box-shadow: 0 0 0 1px var(--cc, #4fd8ff), 0 0 18px -6px var(--cc, #4fd8ff);
+}
+
+/* Locked cards stay fully legible — the stat lean and the unlock condition
+   are the reason to want them, so hiding either would remove the goal. */
+.crew-card.locked { cursor: default; opacity: 0.72; }
+.crew-card.locked:hover { transform: none; }
+
+.crew-card > header {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 7px;
+}
+
+.crew-portrait {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 42px;
+  height: 42px;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--cc, #4fd8ff) 14%, rgba(10, 15, 24, 0.7));
+  border: 1px solid color-mix(in srgb, var(--cc, #4fd8ff) 45%, transparent);
+}
+
+/* image-rendering: pixelated is what keeps the roster portrait as crisp as the
+   in-arena sprite — the browser would otherwise smooth it on upscale. */
+.crew-sprite {
+  width: 34px;
+  height: 34px;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+}
+
+.crew-sprite.locked { filter: grayscale(1) brightness(0.6); }
+
+.crew-card h4 { margin: 0; font-size: 13.5px; font-weight: 650; color: var(--ink); }
+
+.crew-title {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--cc, #4fd8ff);
+}
+
+.crew-blurb {
+  margin: 0 0 8px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #a9bccd;
+}
+
+.crew-weapon {
+  margin: 0 0 8px;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.crew-weapon em {
+  font-style: normal;
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-right: 5px;
+}
+
+.crew-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 6px;
+  margin: 0 0 8px;
+  padding: 0;
+  list-style: none;
+}
+
+.crew-stats li {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  font-weight: 700;
+  background: rgba(255, 255, 255, 0.05);
+}
+
+.crew-stats li em {
+  font-style: normal;
+  font-weight: 400;
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.crew-stats li.up { color: #7dffa8; }
+.crew-stats li.down { color: #ff8a9c; }
+
+.crew-lean {
+  margin: 0 0 9px;
+  font-size: 10.5px;
+  line-height: 1.4;
+  color: var(--ink-dim);
+  font-style: italic;
+}
+
+.btn-pick { width: 100%; padding: 7px; font-size: 11px; margin-top: auto; }
+
+.crew-lock { margin-top: auto; }
+
+.crew-lock-bar {
+  height: 5px;
+  margin-bottom: 5px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.07);
+  overflow: hidden;
+}
+
+.crew-lock-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #a67c1f, var(--amber));
+  transition: width 400ms ease-out;
+}
+
+.crew-lock span {
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.04em;
+  color: var(--red);
+}
+
+/* Ability kit on a crew card — four keybind rows. */
+.crew-kit {
+  margin: 0 0 9px;
+  padding: 0;
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.crew-kit li {
+  display: grid;
+  grid-template-columns: 30px auto;
+  gap: 6px;
+  align-items: baseline;
+  font-size: 10.5px;
+  line-height: 1.35;
+}
+
+.crew-kit kbd {
+  grid-row: span 2;
+  align-self: start;
+  padding: 2px 0;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.07);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  font-family: var(--mono);
+  font-size: 9px;
+  font-weight: 700;
+  text-align: center;
+  color: var(--cyan-soft);
+}
+
+.crew-kit li.ult kbd {
+  color: var(--amber);
+  border-color: rgba(255, 183, 3, 0.45);
+  background: rgba(255, 183, 3, 0.1);
+}
+
+.crew-kit em {
+  font-style: normal;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.crew-kit li.ult em { color: var(--amber); }
+
+.crew-kit span {
+  grid-column: 2;
+  color: var(--ink-dim);
+  font-size: 9.5px;
+  line-height: 1.35;
+}
+
+/* ==========================================================================
+   ACCOUNTS — header chip and the sign-in panel
+   ========================================================================== */
+
+.hub-account {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+/* Empty when cloud saves are unconfigured, so it must not reserve space. */
+.hub-account:empty { display: none; }
+
+.account-info { display: flex; flex-direction: column; line-height: 1.25; }
+
+.account-email {
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 650;
+  color: var(--ink);
+}
+
+.account-note {
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim);
+}
+
+.btn-account {
+  padding: 7px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--panel-line);
+  background: rgba(79, 216, 255, 0.1);
+  color: var(--cyan-soft);
+  font-family: var(--mono);
+  font-size: 11px;
+  font-weight: 650;
+  letter-spacing: 0.08em;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.btn-account:hover { background: rgba(79, 216, 255, 0.2); }
+
+.btn-account.ghost {
+  background: transparent;
+  border-color: rgba(255, 255, 255, 0.12);
+  color: var(--ink-dim);
+}
+
+.btn-account.ghost:hover { color: var(--ink); border-color: rgba(255,255,255,0.28); }
+
+/* --- The modal --- */
+
+.auth-modal {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+  background: rgba(4, 7, 12, 0.84);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  z-index: 40;
+}
+
+/* Same specificity trap the hub tab panels hit: a class selector with its own
+   `display` beats the UA's `[hidden] { display: none }`, so hidden has to win
+   explicitly or the modal is permanently on screen. */
+.auth-modal[hidden] { display: none; }
+
+.auth-panel {
+  position: relative;
+  width: 100%;
+  max-width: 380px;
+  padding: 26px 24px 20px;
+  border: 1px solid var(--panel-line);
+  border-radius: 14px;
+  background: var(--panel);
+  box-shadow: 0 24px 60px -20px rgba(0, 0, 0, 0.8);
+  animation: rise 160ms ease-out;
+}
+
+.auth-panel h2 {
+  margin: 0 0 6px;
+  font-family: var(--mono);
+  font-size: 18px;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  color: var(--cyan-soft);
+}
+
+.auth-blurb {
+  margin: 0 0 18px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: var(--ink-dim);
+}
+
+.auth-close {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  width: 28px;
+  height: 28px;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-dim);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.auth-close:hover { background: rgba(255,255,255,0.07); color: var(--ink); }
+
+.auth-panel label {
+  display: block;
+  margin-bottom: 12px;
+}
+
+.auth-panel label span {
+  display: block;
+  margin-bottom: 5px;
+  font-family: var(--mono);
+  font-size: 9.5px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+
+.auth-panel input {
+  width: 100%;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 13px;
+}
+
+.auth-panel input:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px rgba(79, 216, 255, 0.18);
+}
+
+.auth-panel .btn { width: 100%; margin-top: 4px; }
+
+.auth-error {
+  margin: 0 0 10px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  background: rgba(255, 77, 109, 0.12);
+  border: 1px solid rgba(255, 77, 109, 0.3);
+  font-size: 11.5px;
+  line-height: 1.4;
+  color: #ffb3c0;
+}
+
+.auth-switch {
+  margin: 14px 0 0;
+  text-align: center;
+  font-size: 11.5px;
+  color: var(--ink-dim);
+}
+
+.auth-switch button {
+  margin-left: 5px;
+  border: none;
+  background: none;
+  padding: 0;
+  color: var(--cyan-soft);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
+/* A sync failure on the account chip. Amber rather than red: nothing is lost
+   when this shows — the local save is still authoritative and the cloud row
+   was deliberately left untouched — but it must not read as normal. */
+.account-note-bad {
+  color: #ffb703;
+}
+
+/* --- Bug report form -------------------------------------------------------
+   Reuses .auth-modal/.auth-panel/.auth-blurb/.auth-close/.auth-error, since
+   it's the same "small centred panel" shape as sign-in. Only the textarea
+   (auth-panel only ever styled <input>) and the post-submit message are new. */
+.auth-panel textarea {
+  width: 100%;
+  padding: 10px 11px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.32);
+  color: var(--ink);
+  font-family: var(--font);
+  font-size: 13px;
+  line-height: 1.4;
+  resize: vertical;
+  margin-bottom: 12px;
+}
+.auth-panel textarea:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 2px rgba(79, 216, 255, 0.18);
+}
+
+.report-sent {
+  margin: 6px 0 0;
+  text-align: center;
+  font-size: 13px;
+  color: var(--green, #7dffa8);
+}
+
+/* --- Admin panel ------------------------------------------------------- */
+.admin-panel {
+  max-width: 640px;
+  max-height: 82vh;
+  display: flex;
+  flex-direction: column;
+}
+
+.admin-list-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+
+.admin-reports {
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.admin-report {
+  padding: 12px 14px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+.admin-report.is-reviewed { opacity: 0.55; }
+
+.admin-report-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 6px;
+}
+
+.admin-report-time {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+}
+
+.admin-reviewed-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--green, #7dffa8);
+}
+
+.admin-report-meta {
+  margin-bottom: 6px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  letter-spacing: 0.04em;
+  color: var(--cyan-soft);
+}
+
+.admin-report-message {
+  margin: 0 0 6px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.admin-report-ua {
+  font-size: 10px;
+  color: var(--ink-dim);
+  opacity: 0.7;
+  word-break: break-all;
+}
+
+/* --- Settings: quality segmented control and language select -------------- */
+
+.settings-sep {
+  height: 1px;
+  margin: 14px 0 12px;
+  background: rgba(79, 216, 255, 0.16);
+}
+
+/* --- Keybind remapping sub-panel -------------------------------------------
+   Appended inside #settings itself (see KeybindUI.open()), so it inherits
+   the same 260px width — kept compact rather than trying to widen the panel
+   just for this. */
+.settings-subpanel {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(79, 216, 255, 0.16);
+}
+
+.settings-subpanel h3 {
+  margin: 0 0 10px;
+  font-family: var(--mono);
+  font-size: 13px;
+  letter-spacing: 0.08em;
+  color: var(--cyan-soft, #7ce7ff);
+}
+
+.kb-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.kb-label {
+  font-size: 12px;
+  color: var(--ink-dim, #7f93ab);
+}
+
+.kb-key {
+  min-width: 84px;
+  padding: 6px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.3);
+  color: var(--ink, #e8fbff);
+  font-family: var(--mono);
+  font-size: 12px;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.kb-key:hover { border-color: rgba(79, 216, 255, 0.4); }
+
+.kb-key.kb-listening {
+  border-color: var(--cyan, #4fd8ff);
+  background: rgba(79, 216, 255, 0.12);
+  color: var(--cyan-soft, #7ce7ff);
+  animation: kb-pulse 1s ease-in-out infinite;
+}
+
+@keyframes kb-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.55; }
+}
+
+.kb-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 10px;
+}
+.kb-actions .btn { flex: 1; margin: 0; }
+
+/* Stacked rather than inline: three quality labels plus a language name in
+   nine scripts will not fit beside a label at every width, and a control that
+   wraps unpredictably reads as broken. */
+.settings-row-stack {
+  display: block;
+}
+
+.settings-row-stack > span {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.settings-seg {
+  display: flex;
+  gap: 6px;
+}
+
+.seg-btn {
+  flex: 1;
+  padding: 7px 4px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(10, 15, 24, 0.6);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease;
+}
+
+.seg-btn:hover { border-color: rgba(79, 216, 255, 0.5); }
+
+.seg-btn.on {
+  border-color: #4fd8ff;
+  background: rgba(79, 216, 255, 0.16);
+  color: #dff7ff;
+}
+
+.settings-select {
+  width: 100%;
+  padding: 7px 8px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(10, 15, 24, 0.85);
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+/* The dropdown list itself is drawn by the OS, which does not inherit the page
+   palette — set it explicitly or the options render dark-on-dark. */
+.settings-select option {
+  background: #0a0f18;
+  color: #dff7ff;
+}
+
+/* FPS counter. Fixed to the corner and non-interactive so it can never sit in
+   front of something clickable. */
+#fps-meter {
+  position: fixed;
+  top: 8px;
+  left: 8px;
+  z-index: 60;
+  padding: 2px 7px;
+  border-radius: 4px;
+  background: rgba(10, 15, 24, 0.7);
+  color: #7dffa8;
+  font-family: var(--mono);
+  font-size: 12px;
+  pointer-events: none;
+}
+
+/* --- Hand-drawn gear icons ------------------------------------------------
+   image-rendering:pixelated is load-bearing: without it the browser smooths a
+   10px grid blown up to 40 into mush, which is the usual reason hand-authored
+   pixel art looks wrong in a web UI. */
+.icon-gear-art {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--icon-size, 40px);
+  height: var(--icon-size, 40px);
+  flex: 0 0 auto;
+  border-radius: 6px;
+  background: rgba(10, 15, 24, 0.55);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--rc, #9fb3c8) 45%, transparent);
+}
+
+.icon-gear-art img {
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  display: block;
+}
+
+/* --- Tournament panel ----------------------------------------------------- */
+
+.tw-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 6px;
+}
+
+.tw-head h3 {
+  margin: 0;
+  font-family: var(--mono);
+  font-size: 20px;
+  color: #ffd166;
+}
+
+.tw-biome {
+  font-size: 13px;
+  color: var(--ink-dim, #9fb3c8);
+}
+
+.tw-blurb {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: var(--ink-dim, #9fb3c8);
+}
+
+.tw-rules {
+  margin: 0 0 14px;
+  padding: 0;
+  list-style: none;
+}
+
+.tw-rules li {
+  padding: 8px 10px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(255, 209, 102, 0.22);
+  border-radius: 6px;
+  background: rgba(255, 209, 102, 0.06);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.tw-rules strong { color: #ffd166; }
+
+.tw-best {
+  margin-bottom: 12px;
+  font-size: 14px;
+}
+
+.tw-history-title {
+  margin: 18px 0 8px;
+  font-size: 13px;
+  color: var(--ink-dim, #9fb3c8);
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.tw-history {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tw-history li {
+  display: flex;
+  justify-content: space-between;
+  padding: 5px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+  font-size: 13px;
+}
+
+.tw-week { font-family: var(--mono); color: var(--ink-dim, #9fb3c8); }
+
+/* --- Friends panel -------------------------------------------------------- */
+
+.fr-note { margin: 0 0 12px; font-size: 13px; line-height: 1.5; color: var(--ink-dim, #9fb3c8); }
+.fr-hint { margin: 8px 0 0; font-size: 12px; color: var(--ink-dim, #9fb3c8); }
+.fr-error { margin: 10px 0 0; font-size: 13px; color: #ffb703; }
+
+.fr-me {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+  border: 1px solid rgba(79, 216, 255, 0.22);
+  border-radius: 8px;
+  background: rgba(79, 216, 255, 0.06);
+  flex-wrap: wrap;
+}
+
+.fr-me-label {
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim, #9fb3c8);
+}
+
+.fr-tag { font-family: var(--mono); font-size: 15px; color: var(--ink, #dff7ff); }
+.fr-hash { color: var(--ink-dim, #9fb3c8); }
+
+.fr-row { display: flex; gap: 8px; }
+.fr-row input {
+  flex: 1 1 auto;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 6px;
+  background: rgba(10, 15, 24, 0.75);
+  color: var(--ink, #dff7ff);
+  font: inherit;
+  font-size: 14px;
+}
+.fr-row input:focus { outline: none; border-color: #4fd8ff; }
+.fr-add { margin-bottom: 6px; }
+
+.fr-section {
+  margin: 18px 0 8px;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--ink-dim, #9fb3c8);
+}
+
+.fr-list { margin: 0; padding: 0; list-style: none; }
+
+/* --- Leaderboard tab ----------------------------------------------------- */
+
+.leaderboard {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.lb-search { display: flex; gap: 8px; }
+.lb-search input {
+  flex: 1;
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: var(--ink);
+  font: inherit;
+}
+
+.lb-note, .lb-error { margin: 0; font-size: 12.5px; color: var(--ink-dim); }
+.lb-error { color: var(--red, #ff4d6d); }
+
+.lb-list { margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; gap: 4px; }
+
+.lb-row {
+  display: grid;
+  grid-template-columns: 28px 1fr auto auto auto;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.lb-row.lb-top { background: rgba(255, 209, 102, 0.08); }
+
+.lb-rank {
+  font-family: var(--mono);
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--ink-dim);
+  text-align: center;
+}
+.lb-top .lb-rank { color: #ffd166; }
+
+.lb-name {
+  text-align: left;
+  padding: 0;
+  border: none;
+  background: none;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.lb-name:hover { color: var(--cyan-soft); text-decoration: underline; }
+
+.lb-stat {
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+
+.lb-lookup {
+  padding: 12px;
+  border: 1px solid rgba(79, 216, 255, 0.2);
+  border-radius: 10px;
+  background: rgba(79, 216, 255, 0.05);
+}
+
+.lb-lookup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.lb-lookup-head strong { font-size: 14px; color: var(--ink); }
+
+.lb-lookup-stats { margin: 0; padding: 0; list-style: none; display: flex; flex-wrap: wrap; gap: 12px; }
+.lb-lookup-stats li { font-family: var(--mono); font-size: 12px; color: var(--ink); }
+.lb-lookup-stats em { font-style: normal; color: var(--ink-dim); margin-right: 5px; }
+
+.fr-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 9px 10px;
+  margin-bottom: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  background: rgba(255, 255, 255, 0.03);
+  flex-wrap: wrap;
+}
+
+.fr-actions { display: flex; gap: 6px; flex: 0 0 auto; }
+.fr-pending { font-size: 12px; color: var(--ink-dim, #9fb3c8); align-self: center; }
+
+.fr-playing {
+  font-size: 11px;
+  font-family: var(--mono);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--green, #7dffa8);
+  align-self: center;
+}
+
+.btn-mini.btn-join {
+  border-color: rgba(125, 255, 168, 0.4);
+  color: var(--green, #7dffa8);
+}
+.btn-mini.btn-join:hover { background: rgba(125, 255, 168, 0.14); }
+
+/* --- Multiplayer panel -------------------------------------------------- */
+.multiplayer h3 {
+  margin: 0 0 6px;
+  font-size: 22px;
+  color: var(--cyan, #4fd8ff);
+  letter-spacing: 0.5px;
+}
+
+.multiplayer .mp-desc {
+  margin: 0 0 18px;
+  font-size: 13px;
+  color: var(--ink-dim, #7f93ab);
+}
+
+.mp-form {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.mp-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  color: var(--ink-dim, #7f93ab);
+  margin-bottom: -4px;
+}
+
+.mp-input {
+  width: 100%;
+  padding: 8px 10px;
+  background: rgba(0,0,0,0.35);
+  border: 1px solid rgba(255,255,255,0.12);
+  border-radius: 5px;
+  color: var(--ink, #e8fbff);
+  font-size: 13px;
+  font-family: var(--mono, monospace);
+  outline: none;
+  transition: border-color 0.15s;
+}
+.mp-input:focus { border-color: var(--cyan, #4fd8ff); }
+
+.mp-form-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.btn-mp-join, .btn-mp-create {
+  flex: 1;
+  padding: 10px 18px;
+  font-weight: 700;
+  font-size: 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+
+.btn-mp-join {
+  background: var(--cyan, #4fd8ff);
+  color: #000;
+  border: none;
+}
+.btn-mp-join:hover { background: #37c4ee; }
+
+/* Ghost-styled relative to Join: creating a room is the more common first
+   action (nobody has a code to type yet), but it shouldn't visually compete
+   with Join for someone who already has a code from a friend. */
+.btn-mp-create {
+  background: transparent;
+  color: var(--cyan, #4fd8ff);
+  border: 1px solid rgba(79,216,255,0.4);
+}
+.btn-mp-create:hover { background: rgba(79,216,255,0.1); }
+
+.mp-status {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 14px 0;
+  font-size: 14px;
+  color: var(--ink-dim, #7f93ab);
+}
+.mp-connecting { color: var(--amber, #ffb703); }
+
+.mp-spinner {
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(255,255,255,0.15);
+  border-top-color: var(--amber, #ffb703);
+  border-radius: 50%;
+  animation: mp-spin 0.8s linear infinite;
+}
+@keyframes mp-spin { to { transform: rotate(360deg); } }
+
+.mp-room-info {
+  margin-top: 14px;
+}
+
+.mp-room-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 14px;
+}
+
+.mp-room-label {
+  font-size: 14px;
+  color: var(--ink, #e8fbff);
+}
+.mp-room-label strong {
+  color: var(--cyan, #4fd8ff);
+  font-family: var(--mono, monospace);
+}
+
+.btn-ghost {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.15);
+  color: var(--ink-dim, #7f93ab);
+  padding: 4px 12px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.btn-ghost:hover { border-color: var(--red, #ff4d6d); color: var(--red, #ff4d6d); }
+
+.btn-sm { padding: 3px 10px; font-size: 11px; }
+
+.mp-players {
+  margin-bottom: 16px;
+}
+.mp-players h4 {
+  margin: 0 0 8px;
+  font-size: 13px;
+  color: var(--ink-dim, #7f93ab);
+  text-transform: uppercase;
+  letter-spacing: 1px;
+}
+
+.mp-player {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  margin-bottom: 4px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.03);
+  font-size: 13px;
+  color: var(--ink, #e8fbff);
+}
+.mp-player-me {
+  background: rgba(79, 216, 255, 0.08);
+  border-left: 3px solid var(--cyan, #4fd8ff);
+}
+
+.mp-player-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green, #7dffa8);
+  flex-shrink: 0;
+}
+
+.mp-you {
+  font-size: 11px;
+  color: var(--ink-dim, #7f93ab);
+}
+
+.mp-host-tag {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #000;
+  background: var(--amber, #ffb703);
+  padding: 1px 6px;
+  border-radius: 3px;
+}
+
+.mp-waiting {
+  margin: 10px 0 0;
+  padding: 10px;
+  text-align: center;
+  font-size: 13px;
+  color: var(--ink-dim, #7f93ab);
+  background: rgba(255,255,255,0.03);
+  border-radius: 6px;
+}
+
+.btn-mp-start {
+  width: 100%;
+  padding: 12px;
+  font-size: 15px;
+  font-weight: 700;
+  background: linear-gradient(135deg, var(--cyan, #4fd8ff), var(--violet, #b45cff));
+  color: #000;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+.btn-mp-start:hover { opacity: 0.88; }
+
+/* ==========================================================================
+   RESPONSIVE OVERRIDES — kept at the end of the file on purpose: several of
+   these repeat selectors declared earlier (.hub-tabbar, .hub-account-corner)
+   at equal specificity, and an unconditional rule later in source order
+   beats an earlier one wrapped in @media at the same specificity regardless
+   of which one "sounds" more specific. Placing overrides here, after
+   everything they override, is what makes them actually override.
+   ========================================================================== */
+
+/* Below this, the two side rails (282px + 260px at minimum) no longer fit
+ * next to a usable center — they were overlapping each other and the home
+ * view rather than sitting beside it. This is a keyboard-driven game with no
+ * touch controls, so a phone-width Hub only ever needs to be legible, not
+ * fully reworked into a mobile layout: drop both rails and let the center
+ * content use the full width. */
+@media (max-width: 860px) {
+  .hub-side-panel, .hub-loadout-panel { display: none; }
+  .hub-home { padding: 150px 16px 30px; }
+  /* The tab bar itself is already a single scrollable row at every width
+   * (see .hub-tabbar) — the only thing this breakpoint still needs to
+   * change is where the dock SITS: widened to (almost) the full screen, it
+   * now needs to sit BELOW the brand rather than beside it, since there's no
+   * longer room for both in the same row. */
+  .hub-tabdock {
+    top: 90px;
+    max-width: calc(100% - 28px);
+  }
+  .hub-brand { max-width: calc(50% - 20px); }
+
+  /* The account chip (a "Sign in" button plus a note, or an email/sync-status
+   * pair plus Sign out) and the seven-tab dock both want the top row, and
+   * both can wrap wider than half the screen — sharing that row was how they
+   * ended up printed on top of each other. Bottom-left has nothing else in
+   * it at this width, so the chip moves there instead of trying to squeeze
+   * in above. */
+  .hub-account-corner {
+    top: auto;
+    right: auto;
+    bottom: 14px;
+    left: 14px;
+    max-width: calc(100% - 28px);
+  }
+  .hub-account-corner .account-note { display: none; }
+}

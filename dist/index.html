@@ -1,0 +1,460 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Fracture</title>
+  <meta name="description" content="A roguelite arena survivor. Walk the Fracture, take what it leaks, come back." />
+
+  <!-- Inline on purpose: the game's own CSS is imported from within the JS
+       bundle main.js loads, so it isn't available yet at the moment this
+       screen most needs to render — the whole point of a loading screen is
+       to cover the gap before that bundle has downloaded and parsed. -->
+  <style>
+    #loading-screen {
+      position: fixed;
+      inset: 0;
+      z-index: 1000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      background: radial-gradient(ellipse at 50% -10%, #14203a 0%, #070a11 55%, #05070c 100%);
+      transition: opacity 400ms ease;
+    }
+    #loading-screen.hidden { opacity: 0; pointer-events: none; }
+    #loading-screen h1 {
+      margin: 0;
+      font-family: 'Courier New', Consolas, monospace;
+      font-size: clamp(28px, 6vw, 48px);
+      font-weight: 700;
+      letter-spacing: 0.35em;
+      color: #4fd8ff;
+      text-shadow: 0 0 40px rgba(79, 216, 255, 0.45);
+      animation: loading-pulse 1.8s ease-in-out infinite;
+    }
+    @keyframes loading-pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.55; }
+    }
+    #loading-screen .loading-bar {
+      width: min(220px, 60vw);
+      height: 3px;
+      border-radius: 999px;
+      background: rgba(255, 255, 255, 0.1);
+      overflow: hidden;
+    }
+    #loading-screen .loading-bar::after {
+      content: '';
+      display: block;
+      width: 40%;
+      height: 100%;
+      border-radius: 999px;
+      background: #4fd8ff;
+      box-shadow: 0 0 12px rgba(79, 216, 255, 0.7);
+      animation: loading-sweep 1.3s ease-in-out infinite;
+    }
+    @keyframes loading-sweep {
+      0% { transform: translateX(-100%); }
+      100% { transform: translateX(350%); }
+    }
+    #loading-screen p {
+      margin: 0;
+      font-family: 'Courier New', Consolas, monospace;
+      font-size: 11px;
+      letter-spacing: 0.12em;
+      color: #7f93ab;
+      text-transform: uppercase;
+    }
+  </style>
+  <script type="module" crossorigin src="/assets/index-DjlDLt3U.js"></script>
+  <link rel="stylesheet" crossorigin href="/assets/index-CvUB2Lzk.css">
+</head>
+<body>
+  <div id="loading-screen">
+    <h1>FRACTURE</h1>
+    <div class="loading-bar"></div>
+    <p>Loading&hellip;</p>
+  </div>
+
+  <div id="app">
+    <canvas id="game"></canvas>
+
+    <!-- HUD: always-on readout, layered over the canvas -->
+    <div id="hud">
+      <div class="hud-top">
+        <div class="hud-cluster">
+          <span class="hud-time" data-hud="time">0:00</span>
+          <span class="hud-wave" data-hud="wave">WAVE 1</span>
+        </div>
+        <div class="hud-cluster hud-right">
+          <span class="hud-chip"><em data-i18n="run.labelKills">KILLS</em><span data-hud="kills">0</span></span>
+          <span class="hud-chip" data-hud="fps">60 fps</span>
+        </div>
+      </div>
+
+      <div class="hud-banner" data-hud="banner">WAVE 1</div>
+
+      <div class="hud-bottom">
+        <div class="hud-run-mats" data-hud="runmats"></div>
+        <div class="hud-weapons" data-hud="weapons"></div>
+        <div class="hud-stats" data-hud="stats"></div>
+
+        <div class="bar bar-xp">
+          <div class="bar-fill" data-hud="xp-fill"></div>
+          <span class="bar-label">
+            <span data-hud="level">LV 1</span>
+            <span data-hud="xp-text">0 / 8</span>
+          </span>
+        </div>
+
+        <div class="bar bar-hp">
+          <div class="bar-fill" data-hud="hp-fill"></div>
+          <span class="bar-label">
+            <span>HP</span>
+            <span data-hud="hp-text">100 / 100</span>
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Level-up: pick 1 of 3 -->
+    <div id="levelup" class="overlay">
+      <div class="overlay-inner">
+        <div class="overlay-head">
+          <h2 data-lvl="level">LEVEL 2</h2>
+          <p class="overlay-sub"><span data-i18n="run.chooseUpgrade">Choose an upgrade</span> <span class="queue" data-lvl="queue"></span></p>
+        </div>
+        <div class="cards" data-lvl="cards"></div>
+        <p class="overlay-hint" data-i18n="run.clickCardHint">Click a card, or press 1 2 3</p>
+      </div>
+    </div>
+
+    <!-- Run summary -->
+    <div id="gameover" class="overlay">
+      <div class="overlay-inner">
+        <div class="overlay-head">
+          <h2 class="dead-title" data-i18n="run.dead">UNMADE</h2>
+          <p class="overlay-sub" data-over="best"></p>
+        </div>
+
+        <div class="results">
+          <div class="result result-major">
+            <em data-i18n="run.labelSurvived">SURVIVED</em>
+            <strong data-over="time">0:00</strong>
+          </div>
+          <div class="result result-major">
+            <em data-i18n="run.labelWave">WAVE</em>
+            <strong data-over="wave">1</strong>
+          </div>
+          <div class="result">
+            <em data-i18n="run.labelKills">KILLS</em>
+            <strong data-over="kills">0</strong>
+          </div>
+          <div class="result">
+            <em data-i18n="run.labelLevel">LEVEL</em>
+            <strong data-over="level">1</strong>
+          </div>
+          <div class="result">
+            <em data-i18n="run.labelDamage">DAMAGE</em>
+            <strong data-over="damage">0</strong>
+          </div>
+        </div>
+
+        <div class="haul" data-over="haul"></div>
+
+        <div class="perf-chest" data-over="chest">
+          <div class="perf-chest-box" data-over="chest-box">
+            <div class="perf-chest-glow" data-over="chest-glow"></div>
+            <div class="perf-chest-icon" data-over="chest-icon">&#9636;</div>
+          </div>
+          <button class="btn btn-chest" data-over="chest-open" data-i18n="run.openChest">Open Chest</button>
+          <div class="perf-chest-contents" data-over="chest-contents"></div>
+        </div>
+
+        <div class="overlay-actions">
+          <button class="btn" data-over="restart" data-i18n="run.driftAgain">Drift Again</button>
+          <button class="btn btn-ghost" data-over="hub" data-i18n="run.returnToAnchor">Return to Anchor</button>
+        </div>
+        <p class="overlay-hint" data-i18n="run.restartHint">R to drift again · H for the Anchor</p>
+      </div>
+    </div>
+
+    <!-- Pause -->
+    <div id="paused" class="overlay overlay-quiet">
+      <div class="overlay-inner">
+        <h2 data-i18n="run.paused">PAUSED</h2>
+        <p class="overlay-hint" data-i18n="run.pausedHint">Esc to resume</p>
+        <div class="overlay-actions">
+          <button class="btn btn-ghost" data-pause="restart" data-i18n="run.driftAgain">Drift Again</button>
+          <button class="btn btn-ghost" data-pause="leave" data-i18n="run.returnToAnchor">Return to Anchor</button>
+        </div>
+      </div>
+    </div>
+
+    <div id="hub" class="screen hub-screen">
+      <div class="hub-brand">
+        <h1>FRACTURE</h1>
+        <p class="hub-sub" data-hub="record"></p>
+      </div>
+
+      <nav class="hub-tabdock">
+        <div class="hub-tabbar" data-hub="tabbar">
+          <button class="hub-tab" data-tab="crew" type="button"><span data-i18n="hub.crew">Crew</span></button>
+          <button class="hub-tab" data-tab="forge" type="button"><span data-i18n="hub.forge">Forge</span></button>
+          <button class="hub-tab" data-tab="stash" type="button"><span data-i18n="hub.stash">Stash</span> <span class="count" data-hub="stash-count"></span></button>
+          <button class="hub-tab" data-tab="outpost" type="button"><span data-i18n="hub.outpost">Outpost</span> <span class="ping" data-hub="outpost-ping" hidden></span></button>
+          <button class="hub-tab" data-tab="tournament" type="button"><span data-i18n="hub.tournament">Tournament</span></button>
+          <button class="hub-tab" data-tab="multiplayer" type="button"><span data-i18n="hub.multiplayer">Multiplayer</span></button>
+          <button class="hub-tab" data-tab="friends" type="button"><span data-i18n="hub.friends">Friends</span> <span class="ping" data-hub="friends-ping" hidden></span></button>
+          <button class="hub-tab" data-tab="leaderboard" type="button"><span data-i18n="hub.leaderboard">Leaderboard</span></button>
+        </div>
+      </nav>
+
+      <div class="hub-account-corner" data-hub="account"></div>
+
+      <aside class="hub-side-panel" data-hub="side-panel">
+        <div class="hub-side-panel-head">
+          <h2 data-i18n="hub.leaderboard">Leaderboard</h2>
+          <button class="hub-side-panel-toggle" data-hub="side-panel-toggle" type="button" aria-label="Collapse">&lsaquo;</button>
+        </div>
+        <div class="hub-side-panel-body">
+          <div class="leaderboard leaderboard-side" data-hub="side-leaderboard"></div>
+        </div>
+      </aside>
+
+      <div class="hub-home" data-hub="home">
+        <div class="hub-materials" data-hub="materials"></div>
+        <p class="hub-playername" data-hub="playername"></p>
+        <div class="hub-portrait" data-hub="portrait"></div>
+        <div class="difficulty-picker" data-hub="difficulty"></div>
+        <button class="btn btn-start" data-hub="start" data-i18n="hub.play">Enter the Fracture</button>
+        <button class="btn-reset" data-hub="reset" data-i18n="hub.eraseProgress">Erase all progress</button>
+      </div>
+
+      <aside class="hub-loadout-panel">
+        <h2 data-i18n="hub.loadoutTitle">Loadout</h2>
+        <div class="loadout-presets" data-hub="presets"></div>
+        <div class="loadout" data-hub="loadout"></div>
+        <div class="loadout-summary" data-hub="summary"></div>
+        <button class="btn btn-ghost hub-loadout-edit" data-hub="loadout-edit" type="button" data-i18n="hub.editLoadout">Edit</button>
+      </aside>
+
+      <!-- Sign in / create account. Hidden entirely when cloud saves are not
+           configured, so an unconfigured build shows no dead UI. -->
+      <div class="auth-modal" data-auth="modal" hidden>
+        <div class="auth-panel">
+          <button class="auth-close" data-auth="close" type="button" aria-label="Close">&times;</button>
+          <h2 data-auth="title">Sign in</h2>
+          <p class="auth-blurb" data-auth="blurb">
+            Your progress syncs across every device you sign in on.
+          </p>
+          <form data-auth="form">
+            <label>
+              <span data-i18n="account.email">Email</span>
+              <input type="email" data-auth="email" autocomplete="email" required />
+            </label>
+            <label>
+              <span data-i18n="account.password">Password</span>
+              <input type="password" data-auth="password" autocomplete="current-password"
+                     minlength="6" required />
+            </label>
+            <p class="auth-error" data-auth="error" hidden></p>
+            <button class="btn" type="submit" data-auth="submit">Sign in</button>
+          </form>
+          <p class="auth-switch">
+            <span data-auth="switch-text">No account yet?</span>
+            <button type="button" data-auth="switch">Create one</button>
+          </p>
+        </div>
+      </div>
+
+      <!-- Shown once, right after a successful sign-in/sign-up that has no
+           display name yet. No close button — a signed-in player needs a
+           name before anything that shows one (friends, the Hub itself) can
+           mean anything. Signing back out is the only way past it. -->
+      <div class="auth-modal" data-namegate="modal" hidden>
+        <div class="auth-panel">
+          <h2 data-i18n="namegate.title">Choose your name</h2>
+          <p class="auth-blurb" data-i18n="namegate.blurb">
+            This is what other players see and add you by. It has to be yours
+            alone — pick something not already taken.
+          </p>
+          <form data-namegate="form">
+            <input type="text" data-namegate="name" maxlength="16"
+                   placeholder="Driftwalker" autocomplete="off" spellcheck="false" required />
+            <p class="auth-error" data-namegate="error" hidden></p>
+            <button class="btn" type="submit" data-namegate="submit" data-i18n="namegate.submit">Claim name</button>
+          </form>
+        </div>
+      </div>
+
+      <!-- Crew/Forge/Stash/etc. render as an overlay on top of the persistent
+           home view (character + Enter Fracture) rather than replacing it, so
+           "who am I and how do I start a run" never scrolls out of view behind
+           a tab's content. -->
+      <div class="hub-overlay" data-hub="overlay" hidden>
+        <div class="hub-overlay-panel">
+          <button class="hub-overlay-close" data-hub="overlay-close" type="button" aria-label="Close">&times;</button>
+
+          <div class="hub-tab-panel" data-tab-panel="crew">
+            <div class="crew" data-hub="crew"></div>
+          </div>
+
+          <div class="hub-tab-panel" data-tab-panel="forge" hidden>
+            <div class="rarity-picker" data-hub="rarity"></div>
+            <div class="stash-filters" data-hub="forge-filters"></div>
+            <div class="recipes" data-hub="recipes"></div>
+          </div>
+
+          <div class="hub-tab-panel" data-tab-panel="stash" hidden>
+            <div class="stash-filters" data-hub="stash-filters"></div>
+            <div class="stash" data-hub="stash"></div>
+          </div>
+
+          <div class="hub-tab-panel" data-tab-panel="outpost" hidden>
+            <div class="outpost" data-hub="outpost"></div>
+            <div class="outpost-burst-layer" data-hub="outpost-burst"></div>
+          </div>
+
+          <div class="hub-tab-panel" data-tab-panel="tournament" hidden>
+            <div class="tournament" data-hub="tournament"></div>
+          </div>
+
+          <div class="hub-tab-panel" data-tab-panel="friends" hidden>
+            <div class="friends" data-hub="friends"></div>
+          </div>
+
+          <div class="hub-tab-panel" data-tab-panel="leaderboard" hidden>
+            <div class="leaderboard" data-hub="leaderboard"></div>
+          </div>
+
+          <div class="hub-tab-panel" data-tab-panel="multiplayer" hidden>
+            <div class="multiplayer" data-hub="multiplayer"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="fps-meter" style="display:none">-- fps</div>
+
+    <!-- Skill Tree overlay -->
+    <div id="skilltree" class="overlay overlay-full" hidden>
+      <div class="skilltree-inner">
+        <canvas id="skilltree-canvas"></canvas>
+      </div>
+    </div>
+
+    <button id="settings-btn" type="button" aria-label="Settings">&#9881;</button>
+
+    <div id="settings" class="settings-panel">
+      <div class="settings-head">
+        <h2>Settings</h2>
+        <button type="button" data-set="close" aria-label="Close">&times;</button>
+      </div>
+
+      <label class="settings-row">
+        <span data-i18n="settings.mute">Mute</span>
+        <input type="checkbox" data-set="mute" />
+      </label>
+
+      <label class="settings-row settings-row-volume">
+        <span data-i18n="settings.volume">Volume</span>
+        <input type="range" min="0" max="100" step="1" data-set="volume" />
+        <span class="settings-value" data-set="volume-label">55%</span>
+      </label>
+
+      <p class="settings-hint" data-i18n="settings.audioHint">Sound is generated — nothing to download.</p>
+
+      <div class="settings-sep"></div>
+
+      <div class="settings-row settings-row-stack">
+        <span data-i18n="settings.quality">Graphics</span>
+        <div class="settings-seg" data-set="quality"></div>
+      </div>
+      <p class="settings-hint" data-i18n="settings.quality.hint">Performance mode removes effects, not information.</p>
+
+      <label class="settings-row">
+        <span data-i18n="settings.reduceShake">Reduce screen shake</span>
+        <input type="checkbox" data-set="reduce-shake" />
+      </label>
+
+      <label class="settings-row">
+        <span data-i18n="settings.showFps">Show FPS</span>
+        <input type="checkbox" data-set="show-fps" />
+      </label>
+
+      <div class="settings-sep"></div>
+
+      <div class="settings-row settings-row-stack">
+        <span data-i18n="settings.language">Language</span>
+        <select class="settings-select" data-set="language"></select>
+      </div>
+
+      <div class="settings-sep"></div>
+
+      <div class="settings-row">
+        <span data-i18n="settings.keybindings">Keybindings</span>
+        <button class="btn btn-ghost" data-set="keybinds" type="button">Configure</button>
+      </div>
+
+      <div class="settings-sep"></div>
+
+      <div class="settings-row">
+        <span data-i18n="report.settingsLabel">Found a bug?</span>
+        <button class="btn btn-ghost" data-set="report-bug" type="button" data-i18n="report.open">Report it</button>
+      </div>
+    </div>
+
+    <!-- Bug report: no sign-in required, reachable the same way Settings is. -->
+    <div class="auth-modal" data-report="modal" hidden>
+      <div class="auth-panel">
+        <button class="auth-close" data-report="close" type="button" aria-label="Close">&times;</button>
+        <h2 data-i18n="report.title">Report a Bug</h2>
+        <p class="auth-blurb" data-i18n="report.blurb">
+          What happened? The more specific, the better — what you were doing right
+          before it happened helps most.
+        </p>
+        <form data-report="form">
+          <textarea data-report="message" rows="5" maxlength="2000"
+                    placeholder="e.g. My weapon stopped firing after I picked up the Lodestone passive on wave 12..." required></textarea>
+          <p class="auth-error" data-report="error" hidden></p>
+          <button class="btn" type="submit" data-report="submit" data-i18n="report.submit">Send Report</button>
+        </form>
+        <p class="report-sent" data-report="sent" hidden data-i18n="report.thanks">
+          Thanks — that's been sent.
+        </p>
+      </div>
+    </div>
+
+    <!-- Admin panel: only ever shown if the page was opened with ?admin in
+         the URL (see main.js). Everyone else never sees this exist. -->
+    <div id="adminpanel" class="auth-modal" data-admin="modal" hidden>
+      <div class="auth-panel admin-panel">
+        <h2 data-i18n="admin.title">Bug Reports</h2>
+        <div data-admin="login">
+          <p class="auth-blurb" data-i18n="admin.passwordPrompt">Enter the admin password.</p>
+          <form data-admin="form">
+            <input type="password" data-admin="password" autocomplete="off" required />
+            <p class="auth-error" data-admin="error" hidden></p>
+            <button class="btn" type="submit" data-i18n="admin.unlock">Unlock</button>
+          </form>
+        </div>
+        <div data-admin="list" hidden>
+          <div class="admin-list-head">
+            <span data-admin="count"></span>
+            <button class="btn btn-ghost btn-sm" data-admin="refresh" type="button" data-i18n="admin.refresh">Refresh</button>
+          </div>
+          <div class="admin-reports" data-admin="reports"></div>
+        </div>
+      </div>
+    </div>
+
+    <div id="help">
+      <kbd>WASD</kbd> move &nbsp;·&nbsp; rig fires itself &nbsp;·&nbsp; <kbd>Q</kbd><kbd>E</kbd><kbd>R</kbd> abilities &nbsp;·&nbsp; <kbd>Space</kbd> ultimate
+    </div>
+  </div>
+
+</body>
+</html>
